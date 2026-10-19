@@ -31,6 +31,10 @@ import {
 export const DEFAULT_POLL_INTERVAL_MS = 10_000;
 export const DEFAULT_MAX_EXPORT_ATTEMPTS = 3;
 export const RETRYABLE_EXPORT_STATUSES = new Set(["FAILED_EXTERNAL_COMMUNICATION"]);
+
+// ISC's tag-associations service returns a 500 for TAG exports, which aborts
+// the whole job and leaves every other type unbacked up. Remove once fixed.
+export const SKIPPED_EXPORT_TYPES = new Set(["TAG"]);
 import { BACKUP_DIR } from "./backup-path-utils.mjs";
 
 export { BACKUP_DIR };
@@ -77,8 +81,14 @@ async function getExportableTypes() {
     `/${API_VERSION}/sp-config/config-objects?filters=exportable%20eq%20%22true%22`
   );
 
-  const types = [...new Set(data.map((obj) => obj.objectType))];
+  const allTypes = [...new Set(data.map((obj) => obj.objectType))];
+  const types = allTypes.filter((type) => !SKIPPED_EXPORT_TYPES.has(type));
+  const skipped = allTypes.filter((type) => SKIPPED_EXPORT_TYPES.has(type));
+
   console.log(`Found ${types.length} exportable types: ${types.join(", ")}`);
+  if (skipped.length > 0) {
+    console.log(`Skipping known-broken types: ${skipped.join(", ")}`);
+  }
   return types;
 }
 
