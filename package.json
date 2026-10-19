@@ -1,0 +1,13 @@
+{
+  "name": "config-hub-cicd",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "node scripts/cli.mjs",
+    "start": "node scripts/cli.mjs"
+  },
+  "dependencies": {
+    "js-yaml": "^4.2.0",
+    "libsodium-wrappers": "^0.8.4"
+  }
+}

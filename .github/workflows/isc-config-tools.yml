@@ -1,0 +1,132 @@
+# ISC Config Tools — tokenize, drift-detection
+
+name: ISC Config Tools
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Config tools operation"
+        required: true
+        type: choice
+        options:
+          - tokenize
+          - drift-detection
+      tenant:
+        description: "Tenant name"
+        required: true
+        type: string
+      tokenize_command:
+        description: "Tokenize subcommand (tokenize only)"
+        required: false
+        default: find-tokens
+        type: choice
+        options:
+          - find-tokens
+          - create-template
+          - both
+      template_set:
+        description: "Template set name (tokenize only)"
+        required: false
+        default: default
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — must run on main
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "ERROR: This workflow must be run from the main branch."
+            exit 1
+          fi
+      - name: Check tenant
+        run: |
+          if [ -z "${{ inputs.tenant }}" ]; then
+            echo "ERROR: tenant is required"
+            exit 1
+          fi
+
+  run:
+    name: ${{ inputs.operation }} — ${{ inputs.tenant }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.tenant }}
+
+    steps:
+      - name: Checkout main (scripts + package.json)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Fetch tenant data
+        run: |
+          git fetch origin ${{ inputs.tenant }} --depth=1
+          rm -rf backups/ templates/ vars/ 2>/dev/null || true
+          git checkout origin/${{ inputs.tenant }} -- backups/ templates/ vars/ 2>/dev/null || true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run create-template
+        if: inputs.operation == 'tokenize' && (inputs.tokenize_command == 'create-template' || inputs.tokenize_command == 'both')
+        env:
+          TENANT_URL: ${{ secrets.TENANT_URL }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+        run: |
+          node scripts/cli.mjs tokenize create-template "${{ inputs.tenant }}" --template "${{ inputs.template_set }}"
+
+      - name: Run find-tokens
+        if: inputs.operation == 'tokenize' && (inputs.tokenize_command == 'find-tokens' || inputs.tokenize_command == 'both')
+        env:
+          TENANT_URL: ${{ secrets.TENANT_URL }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+        run: |
+          node scripts/cli.mjs tokenize find-tokens "${{ inputs.tenant }}" --template "${{ inputs.template_set }}"
+
+      - name: Run drift detection
+        if: inputs.operation == 'drift-detection'
+        env:
+          TENANT_URL: ${{ secrets.TENANT_URL }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          TENANT_NAME: ${{ inputs.tenant }}
+        run: |
+          node scripts/cli.mjs backup 2>&1 | tee /tmp/backup-output.txt
+          if git diff --quiet; then
+            echo "✅ No drift detected — live state matches backup" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ DRIFT DETECTED — Live state differs from backup" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            git diff --name-only | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Commit tokenize changes
+        if: inputs.operation == 'tokenize'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin ${{ inputs.tenant }} --depth=1
+          git checkout -B ${{ inputs.tenant }} origin/${{ inputs.tenant }}
+          git add templates/ vars/
+          if git diff --cached --quiet; then
+            echo "No changes detected — skipping commit"
+          else
+            git commit -m "tokenize: refresh templates/vars (${{ inputs.tokenize_command }}, set=${{ inputs.template_set }})"
+            git push origin HEAD:${{ inputs.tenant }}
+          fi

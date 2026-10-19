@@ -1,0 +1,13 @@
+## 🎯 What
+Removed the unused `readFileSync` import from `node:fs` in `scripts/test-onboard-upsert.mjs`.
+
+## 💡 Why
+Removing unused imports improves code readability and maintainability. It also helps prevent potential confusion or misuse of the unused module in the future.
+
+## ✅ Verification
+- Checked `scripts/test-onboard-upsert.mjs` to ensure the `readFileSync` import was removed and no other changes were made.
+- Ran the specific test file `node scripts/test-onboard-upsert.mjs` individually to ensure it passes.
+- Ran the full test suite (`scripts/test-*.mjs`) using mock environment variables and all tests passed successfully or failed expectedly due to pre-existing issues.
+
+## ✨ Result
+The file `scripts/test-onboard-upsert.mjs` no longer has an unused import, making the code slightly cleaner without altering its behavior.

@@ -1,0 +1,63 @@
+# ISC Cleanup Tenant Workflows
+#
+# One-time (or on-demand) removal of .github/workflows/ copied onto tenant
+# branches by the retired sync-workflows workflow. Tenant branches should
+# carry data only; workflow definitions live on main.
+#
+# Run dry-run first (default), then re-run with dry_run=false to push.
+
+name: ISC Cleanup Tenant Workflows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: 'Single tenant branch to clean. Leave blank for all in tenants.yaml.'
+        required: false
+        type: string
+      dry_run:
+        description: 'Set to false to commit and push. Any other value only reports.'
+        required: false
+        type: string
+        default: 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: Remove tenant branch workflow copies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — must run on main
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "ERROR: This workflow must be run from the main branch. Current branch: ${{ github.ref_name }}"
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Remove workflow copies from tenant branches
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          ARGS=()
+          if [ -n "${{ inputs.tenant }}" ]; then
+            ARGS+=(--tenant "${{ inputs.tenant }}")
+          fi
+          if [ "${{ inputs.dry_run }}" != "false" ]; then
+            ARGS+=(--dry-run)
+          fi
+          node scripts/cleanup-tenant-workflows.mjs "${ARGS[@]}" | tee "$GITHUB_STEP_SUMMARY"

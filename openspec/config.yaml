@@ -1,0 +1,73 @@
+schema: superpowers-bridge
+
+context: |
+  Project: ISC Config Hub CI/CD — automated backup and restore for SailPoint Identity Security Cloud (ISC) tenants.
+
+  Purpose: GitHub-native platform that stores ISC configuration backups as JSON in git, with full audit history, scheduled backups, cross-tenant restore, and tokenization for environment promotion.
+
+  Architecture:
+  - Branch-per-tenant model: tenant name is the single source of truth (branch, GitHub Environment, flat backups/ on tenant branch)
+  - tenants.yaml on main indexes all tenants with per-tenant cron schedules
+  - Each tenant branch carries .tenant.yaml descriptor, branch-specific .gitignore, and flat backups/ (data only — no scripts or workflows)
+  - GitHub Environments hold TENANT_URL, CLIENT_ID, CLIENT_SECRET per tenant
+  - ADMIN_TOKEN repository secret required for onboarding (GITHUB_TOKEN cannot manage env secrets)
+
+  Tech stack:
+  - Node.js 20+ (ES modules), npm
+  - Scripts in scripts/ (cli.mjs entry point): backup, restore, onboard, verify, tokenize, dashboard, reporting
+  - js-yaml, libsodium-wrappers dependencies
+  - No build step; tests are node scripts (test-*.mjs)
+
+  GitHub Actions (primary UX — six operator workflows on main):
+  - isc-lifecycle.yml — onboard, verify, schedule-toggle, offboard
+  - isc-backup.yml — manual per-tenant backup
+  - isc-restore.yml — cross-tenant restore (source_ref input, main only)
+  - isc-config-tools.yml — tokenize, drift-detection
+  - scheduled-backup.yml — fleet matrix scheduler
+  - isc-maintenance.yml — prune-tags, cleanup-deployments
+
+  Key directories:
+  - backups/<TYPE>/<objectId>.json — backup artifacts on tenant branches (flat layout)
+  - templates/ + vars/ — tokenization for cross-environment promotion
+  - reports/ — generated backup summary markdown
+  - docs/ — operator and technical documentation; README.md is generated from README.template.md
+  - openspec/adr/ — durable architectural decisions (branch-per-tenant, centralized scheduler, CLI alignment)
+
+  Design principles:
+  - GitHub UI first: Actions, Environments, branches, tags, releases as primary operator surfaces
+  - CLI mirrors GitHub Actions for local dev parity
+  - Gherkin-style scenarios in specs; each scenario should map to an automated test
+
+  Test command: node scripts/test-*.mjs (run relevant test file per change; no single npm test script)
+
+rules:
+  global:
+    - "Always use the changelog-generator skill to maintain and enforce a changelog for all changes."
+    - "Prefer GitHub Actions workflow_dispatch over CLI for user-facing operations; CLI must stay aligned with Actions."
+    - "Tenant name conventions: lowercase alphanumeric and hyphens only; derived from ISC API URL hostname subdomain."
+  brainstorm:
+    - "Invoke Superpowers brainstorming skill; output goes to change brainstorm.md, never docs/superpowers/specs/."
+    - "Evaluate fit against existing openspec/specs/ capabilities before proposing new ones."
+  proposal:
+    - "Reuse existing capability names from openspec/specs/; ask user before creating new capabilities."
+    - "Call out GitHub UI impact (Actions inputs, Environments, branch/tag selection) in Impact section."
+  design:
+    - "Must use c4-diagram skill for cross-cutting or architectural changes."
+    - "Read openspec/adr/ first; new decisions supersede via new ADRs, never edit accepted ADRs."
+    - "Document GitHub Actions ↔ CLI parity requirements when both surfaces are affected."
+  specs:
+    - "Must use gherkin-authoring skill for requirement and scenario content."
+    - "Each #### Scenario: must use GIVEN/WHEN/THEN; scenarios use exactly 4 hashtags."
+    - "Cover both GitHub Actions and CLI paths when the capability is exposed via both."
+  tasks:
+    - "Map every spec scenario to at least one implementation or test task."
+    - "Include mandatory Documentation and Changelog closing sections per schema."
+    - "Update README workflow sections when user-visible GitHub Actions inputs change."
+  plan:
+    - "Invoke Superpowers writing-plans skill; output goes to change plan.md."
+    - "Record canonical test command (node scripts/test-<module>.mjs) in plan.md."
+  verify:
+    - "Run openspec validate --all --json; every item must be valid: true."
+    - "Confirm each #### Scenario: has a passing automated test before marking PASS."
+  retrospective:
+    - "Evidence-first: cite commit hashes, test names, and measurable facts in each section."

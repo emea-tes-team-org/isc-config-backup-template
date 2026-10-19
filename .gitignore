@@ -1,0 +1,15 @@
+node_modules/
+.env*
+*.log
+.DS_Store
+.github/.local-pat
+
+# Filled tenant credential files — never commit secrets
+tenant.yaml
+tenant-credentials.yaml
+templates/*-credentials.yaml
+!templates/*.template.yaml
+
+# Benchmark data
+backups/benchmark/
+backups/benchmark-tenant/

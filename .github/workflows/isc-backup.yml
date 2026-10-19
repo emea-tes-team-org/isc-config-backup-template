@@ -1,0 +1,266 @@
+# After this runs, use the "Generate / Refresh Templates and Vars" workflow
+# (tokenize.yml) to deliberately regenerate templates or refresh vars files.
+#
+# For scheduled daily backups across all active tenants, see
+# .github/workflows/scheduled-backup.yml
+#
+# This workflow always uses scripts from main regardless of which branch
+# is selected in the "Use workflow from" dropdown. Backup data is fetched
+# from the tenant branch before the script runs and pushed back afterward.
+name: ISC Backup
+
+on:
+  workflow_dispatch: # Allow manual trigger
+    inputs:
+      tenant:
+        description: 'Tenant to backup'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  deployments: write
+
+jobs:
+  resolve-settings:
+    name: Resolve tenant settings
+    runs-on: ubuntu-latest
+    env:
+      TARGET_TENANT: ${{ inputs.tenant || github.ref_name }}
+    outputs:
+      export_poll_minutes: ${{ steps.settings.outputs.export_poll_minutes }}
+      job_timeout_minutes: ${{ steps.settings.outputs.job_timeout_minutes }}
+    steps:
+      - name: Checkout main (tenants.yaml)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Resolve tenant backup settings
+        id: settings
+        run: |
+          SETTINGS=$(node --input-type=module -e "
+            import { loadRegistry, getTenantBackupSettings } from './scripts/tenant-registry.mjs';
+            console.log(JSON.stringify(getTenantBackupSettings(loadRegistry(), process.env.TARGET_TENANT)));
+          ")
+          echo "export_poll_minutes=$(echo "$SETTINGS" | jq -r '.exportPollMinutes')" >> "$GITHUB_OUTPUT"
+          echo "job_timeout_minutes=$(echo "$SETTINGS" | jq -r '.jobTimeoutMinutes')" >> "$GITHUB_OUTPUT"
+
+  backup:
+    needs: resolve-settings
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJson(needs.resolve-settings.outputs.job_timeout_minutes) || 15 }}
+    environment: ${{ inputs.tenant || github.ref_name }}
+    env:
+      TARGET_TENANT: ${{ inputs.tenant || github.ref_name }}
+
+    steps:
+      - name: Checkout main (scripts + package.json)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Fetch tenant backup data
+        run: |
+          git fetch origin ${{ env.TARGET_TENANT }} --depth=1
+          rm -rf backups/ 2>/dev/null || true
+          git checkout origin/${{ env.TARGET_TENANT }} -- backups/ 2>/dev/null || true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run backup
+        env:
+          TENANT_URL: ${{ secrets.TENANT_URL }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          TENANT_NAME: ${{ env.TARGET_TENANT }}
+          EXPORT_POLL_MINUTES: ${{ needs.resolve-settings.outputs.export_poll_minutes }}
+          MAX_EXPORT_ATTEMPTS: "3"
+        run: node scripts/cli.mjs backup
+
+      - name: Compute backup statistics
+        id: stats
+        if: always()
+        run: |
+          STATS=$(node scripts/generate-backup-stats.mjs)
+          echo "stats=$STATS" >> $GITHUB_OUTPUT
+          echo "$STATS" | jq .
+
+      - name: Commit and push changes
+        id: commit
+        run: |
+          run_create_backup_tag() {
+            set -euo pipefail
+            local tag_name="$1"
+            local script_dir
+            script_dir=$(mktemp -d)
+            mkdir -p "$script_dir/scripts"
+            for script in create-backup-tag.sh push-backup-tag.sh push-with-retry.sh; do
+              git show "main:scripts/$script" > "$script_dir/scripts/$script"
+              chmod +x "$script_dir/scripts/$script"
+            done
+            bash "$script_dir/scripts/create-backup-tag.sh" "$tag_name"
+            rm -rf "$script_dir"
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Switch to the tenant branch so the commit lands on the correct branch.
+          # (The job checked out main for scripts; the backup data belongs on the tenant branch.)
+          git checkout -B ${{ env.TARGET_TENANT }} origin/${{ env.TARGET_TENANT }}
+          git add backups/
+          if git diff --cached --quiet; then
+            echo "No changes detected — skipping commit but tagging current HEAD"
+            TIMESTAMP=$(date -u +%Y-%m-%d_%H-%M-%S)
+            TAG_NAME="${{ env.TARGET_TENANT }}/$TIMESTAMP"
+            run_create_backup_tag "$TAG_NAME"
+            echo "STATUS=unchanged" >> $GITHUB_ENV
+            echo "TAG=$TAG_NAME" >> $GITHUB_ENV
+          else
+            TIMESTAMP=$(date -u +%Y-%m-%d_%H-%M-%S)
+            TAG_NAME="${{ env.TARGET_TENANT }}/$TIMESTAMP"
+            git commit -m "backup: $(date -u +%Y-%m-%d) ISC configuration snapshot"
+
+            # Debug: show current state before push
+            echo "Current branch: $(git branch --show-current)"
+            echo "HEAD: $(git rev-parse HEAD)"
+            echo "origin/${{ env.TARGET_TENANT }}: $(git rev-parse origin/${{ env.TARGET_TENANT }} 2>/dev/null || echo 'not fetched')"
+
+            # The remote branch may have moved while the backup was running.
+            # Try to push; if it fails, fetch the latest tip and re-apply our
+            # backup changes on top of it.
+            if ! git push origin HEAD:${{ env.TARGET_TENANT }}; then
+              echo "Push rejected; fetching latest remote tip and re-applying backup changes..."
+              git fetch origin ${{ env.TARGET_TENANT }} --depth=1
+              git reset --soft origin/${{ env.TARGET_TENANT }}
+              git add backups/
+              git commit -m "backup: $(date -u +%Y-%m-%d) ISC configuration snapshot"
+              git push origin HEAD:${{ env.TARGET_TENANT }}
+            fi
+            echo "STATUS=backed-up" >> $GITHUB_ENV
+            echo "TAG=$TAG_NAME" >> $GITHUB_ENV
+            run_create_backup_tag "$TAG_NAME"
+          fi
+
+      - name: Publish backup release
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_STATS: ${{ steps.stats.outputs.stats }}
+        run: |
+          SCRIPT=$(mktemp)
+          git show main:scripts/create-backup-release.sh > "$SCRIPT"
+          chmod +x "$SCRIPT"
+          bash "$SCRIPT" "$TAG" "${{ env.TARGET_TENANT }}" "$BACKUP_STATS"
+          rm -f "$SCRIPT"
+
+      - name: Report summary
+        if: always()
+        run: |
+          STATS='${{ steps.stats.outputs.stats }}'
+          if [ -z "$STATS" ] || [ "$STATS" = "" ]; then
+            STATS='{"size":0,"files":0,"added":0,"deleted":0,"modified":0}'
+          fi
+
+          if [ "$STATUS" = "backed-up" ]; then
+            echo "✅ ${{ env.TARGET_TENANT }}: Backed up successfully ($TAG)"
+          elif [ "$STATUS" = "unchanged" ]; then
+            echo "ℹ️ ${{ env.TARGET_TENANT }}: No changes detected ($TAG)"
+          else
+            echo "❌ ${{ env.TARGET_TENANT }}: Backup failed"
+          fi
+
+          SIZE=$(echo "$STATS" | jq -r '.size')
+          FILES=$(echo "$STATS" | jq -r '.files')
+          ADDED=$(echo "$STATS" | jq -r '.added')
+          DELETED=$(echo "$STATS" | jq -r '.deleted')
+          MODIFIED=$(echo "$STATS" | jq -r '.modified')
+          echo ""
+          echo "### Backup Statistics"
+          echo "- Size: $SIZE bytes"
+          echo "- Files: $FILES"
+          echo "- Added: $ADDED"
+          echo "- Deleted: $DELETED"
+          echo "- Modified: $MODIFIED"
+
+  cleanup-deployment:
+    name: Remove ephemeral deployment trace
+    needs: backup
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      TARGET_TENANT: ${{ inputs.tenant || github.ref_name }}
+    steps:
+      - name: Remove ephemeral deployment trace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SCRIPT="${RUNNER_TEMP}/cleanup-deployment.sh"
+          gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/cleanup-deployment.sh?ref=main" --jq .content | base64 -d > "$SCRIPT"
+          chmod +x "$SCRIPT"
+          bash "$SCRIPT" "${{ env.TARGET_TENANT }}"
+
+  update-dashboard:
+    name: Update operations dashboard
+    needs: backup
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch tenant branches and tags
+        run: |
+          git fetch origin --tags
+          while IFS= read -r tenant; do
+            [ -z "$tenant" ] && continue
+            git fetch origin "$tenant" --depth=1 || true
+          done < <(node --input-type=module -e "
+            import { loadRegistry } from './scripts/tenant-registry.mjs';
+            for (const t of loadRegistry().tenants) console.log(t.name);
+          ")
+
+      - name: Generate README and tenant shortcuts
+        run: node scripts/generate-readme.mjs README.md
+
+      - name: Commit README and shortcuts to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md .github/workflows/isc-backup-*.yml .github/workflows/isc-toggle-*.yml
+          if git diff --cached --quiet; then
+            echo "No README or shortcut changes to commit"
+          else
+            git commit -m "ops-dashboard: update fleet status after ${{ inputs.tenant }} backup"
+            git push origin main
+          fi
+
+      - name: Display dashboard summary
+        run: sed -n '/## Operations Dashboard/,$p' README.md >> "$GITHUB_STEP_SUMMARY"
+

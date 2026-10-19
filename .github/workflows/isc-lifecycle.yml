@@ -1,0 +1,364 @@
+# ISC Lifecycle — onboard, verify, schedule-toggle, offboard
+#
+# Prerequisites for onboard:
+#   - ADMIN_TOKEN repository secret (fine-grained PAT: Administration,
+#     Environments, Contents, and Workflows read/write; Actions read-only)
+#   - Must be run from main
+
+name: ISC Lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Lifecycle operation"
+        required: true
+        type: choice
+        options:
+          - onboard
+          - verify
+          - schedule-toggle
+          - offboard
+      tenant:
+        description: "Tenant name (required for verify, schedule-toggle, offboard)"
+        required: false
+        type: string
+      api_url:
+        description: "ISC API URL (onboard)"
+        required: false
+        type: string
+      client_id:
+        description: "ISC client ID (onboard)"
+        required: false
+        type: string
+      client_secret:
+        description: "ISC client secret (onboard)"
+        required: false
+        type: string
+      active:
+        description: "Include in scheduled backups (onboard)"
+        required: false
+        default: true
+        type: boolean
+      description:
+        description: "Tenant description (onboard)"
+        required: false
+        type: string
+      confirm_tenant:
+        description: "Confirm tenant name (offboard — must match tenant)"
+        required: false
+        type: string
+      run_backup:
+        description: "Dispatch backup after verify (verify only)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    outputs:
+      operation: ${{ steps.check.outputs.operation }}
+      tenant_name: ${{ steps.check.outputs.tenant_name }}
+    steps:
+      - name: Guard — must run on main
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "ERROR: This workflow must be run from the main branch. Current branch: ${{ github.ref_name }}"
+            exit 1
+          fi
+
+      - name: Validate required fields
+        id: check
+        env:
+          OPERATION: ${{ inputs.operation }}
+          TENANT: ${{ inputs.tenant }}
+          API_URL: ${{ inputs.api_url }}
+          CLIENT_ID: ${{ inputs.client_id }}
+          CLIENT_SECRET: ${{ inputs.client_secret }}
+          CONFIRM: ${{ inputs.confirm_tenant }}
+        run: |
+          echo "operation=$OPERATION" >> "$GITHUB_OUTPUT"
+
+          case "$OPERATION" in
+            onboard)
+              if [ -z "$API_URL" ] || [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+                echo "ERROR: onboard requires api_url, client_id, and client_secret"
+                exit 1
+              fi
+              if [ -n "$TENANT" ]; then
+                echo "tenant_name=$TENANT" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            verify|schedule-toggle)
+              if [ -z "$TENANT" ]; then
+                echo "ERROR: $OPERATION requires tenant"
+                exit 1
+              fi
+              echo "tenant_name=$TENANT" >> "$GITHUB_OUTPUT"
+              ;;
+            offboard)
+              if [ -z "$TENANT" ] || [ -z "$CONFIRM" ]; then
+                echo "ERROR: offboard requires tenant and confirm_tenant"
+                exit 1
+              fi
+              if [ "$TENANT" != "$CONFIRM" ]; then
+                echo "ERROR: confirm_tenant must match tenant exactly"
+                exit 1
+              fi
+              echo "tenant_name=$TENANT" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "ERROR: Unknown operation $OPERATION"
+              exit 1
+              ;;
+          esac
+
+  onboard:
+    name: Onboard tenant
+    needs: validate
+    if: needs.validate.outputs.operation == 'onboard'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check ADMIN_TOKEN secret
+        run: |
+          if [ -z "${{ secrets.ADMIN_TOKEN }}" ]; then
+            echo "ERROR: ADMIN_TOKEN repository secret is not configured."
+            exit 1
+          fi
+
+      # Full history and all tenant branches: the dashboard reads per-tenant
+      # backup commits, restore-point tags, and object counts from git.
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.ADMIN_TOKEN }}
+
+      - name: Extract and validate tenant name
+        id: tenant
+        env:
+          API_URL: ${{ inputs.api_url }}
+          INPUT_NAME: ${{ inputs.tenant }}
+        run: |
+          DERIVED=$(echo "$API_URL" | sed -E 's#^https?://##; s#/.*##; s/\..*//')
+          TENANT_NAME="${INPUT_NAME:-$DERIVED}"
+          if ! [[ "$TENANT_NAME" =~ ^[a-z0-9-]+$ ]]; then
+            echo "ERROR: Tenant name '$TENANT_NAME' must be lowercase alphanumeric with hyphens only."
+            exit 1
+          fi
+          echo "tenant_name=$TENANT_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Validate credentials
+        env:
+          API_URL: ${{ inputs.api_url }}
+          CLIENT_ID: ${{ inputs.client_id }}
+          CLIENT_SECRET: ${{ inputs.client_secret }}
+        run: |
+          node - <<'NODE'
+          const url = process.env.API_URL.replace(/\/+$/, '') + '/oauth/token';
+          const body = new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: process.env.CLIENT_ID,
+            client_secret: process.env.CLIENT_SECRET,
+          });
+          fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+          })
+            .then(async (res) => {
+              if (!res.ok) {
+                const text = await res.text().catch(() => '');
+                throw new Error(`Credential validation failed: HTTP ${res.status}\n${text}`);
+              }
+              console.log('Credentials validated successfully.');
+            })
+            .catch((err) => {
+              console.error('ERROR:', err.message);
+              process.exit(1);
+            });
+          NODE
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run onboarding
+        id: onboard
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          TENANT_NAME: ${{ steps.tenant.outputs.tenant_name }}
+          API_URL: ${{ inputs.api_url }}
+          CLIENT_ID: ${{ inputs.client_id }}
+          CLIENT_SECRET: ${{ inputs.client_secret }}
+          ACTIVE: ${{ inputs.active }}
+          DESCRIPTION: ${{ inputs.description }}
+        run: node scripts/onboard.mjs --from-env --push-registry
+
+      - name: Fetch backup tags
+        run: git fetch origin --tags
+
+      - name: Regenerate dashboard
+        run: node scripts/generate-readme.mjs README.md
+
+      - name: Commit dashboard to main
+        env:
+          TENANT_NAME: ${{ steps.tenant.outputs.tenant_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "Dashboard already lists $TENANT_NAME"
+          else
+            git commit -m "ops-dashboard: add $TENANT_NAME to fleet status [skip ci]"
+            git push origin main
+          fi
+
+      - name: Commit tenant shortcut workflows to main
+        env:
+          TENANT_NAME: ${{ steps.tenant.outputs.tenant_name }}
+        run: |
+          git add .github/workflows/isc-backup-*.yml .github/workflows/isc-toggle-*.yml
+          if git diff --cached --quiet; then
+            echo "No shortcut workflow changes to commit"
+            exit 0
+          fi
+          git commit -m "ops-dashboard: add $TENANT_NAME shortcut workflows [skip ci]"
+          if ! git push origin main; then
+            echo "::warning::Could not push shortcut workflows for $TENANT_NAME. ADMIN_TOKEN needs Workflows: Read and write to create files under .github/workflows."
+          fi
+
+      - name: Summary
+        env:
+          TENANT_NAME: ${{ steps.tenant.outputs.tenant_name }}
+          ONBOARD_ACTION: ${{ steps.onboard.outputs.onboard_action }}
+        run: |
+          {
+            echo "## Onboarding Complete"
+            echo ""
+            echo "| Resource | Value |"
+            echo "| --- | --- |"
+            echo "| Tenant | $TENANT_NAME |"
+            echo "| Result | ${ONBOARD_ACTION:-updated} |"
+            echo ""
+            echo "Trigger **Scheduled Backup** with tenant \`$TENANT_NAME\` for an immediate first backup."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: Verify tenant
+    needs: validate
+    if: needs.validate.outputs.operation == 'verify'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify onboarding
+        env:
+          TENANT: ${{ needs.validate.outputs.tenant_name }}
+        run: |
+          ARGS=("$TENANT")
+          if [ "${{ inputs.run_backup }}" = "true" ]; then
+            ARGS+=(--backup)
+          fi
+          node scripts/cli.mjs verify "${ARGS[@]}"
+
+  schedule-toggle:
+    name: Toggle schedule
+    needs: validate
+    if: needs.validate.outputs.operation == 'schedule-toggle'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          token: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Toggle tenant schedule
+        id: toggle
+        env:
+          TENANT_NAME: ${{ needs.validate.outputs.tenant_name }}
+        run: node scripts/cli.mjs schedule-toggle "$TENANT_NAME" --push
+
+      - name: Summary
+        env:
+          TENANT_NAME: ${{ needs.validate.outputs.tenant_name }}
+          TOGGLE_ACTION: ${{ steps.toggle.outputs.action }}
+        run: |
+          {
+            echo "## Schedule Toggle Complete"
+            echo ""
+            if [ "$TOGGLE_ACTION" = "disable" ]; then
+              echo "**$TENANT_NAME** was removed from the scheduled backup matrix."
+            else
+              echo "**$TENANT_NAME** was added to the scheduled backup matrix."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  offboard:
+    name: Offboard tenant
+    needs: validate
+    if: needs.validate.outputs.operation == 'offboard'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Offboard tenant
+        env:
+          TENANT_NAME: ${{ needs.validate.outputs.tenant_name }}
+        run: node scripts/cli.mjs offboard "$TENANT_NAME" --yes
+
+      - name: Summary
+        env:
+          TENANT_NAME: ${{ needs.validate.outputs.tenant_name }}
+        run: |
+          {
+            echo "## Offboard Complete"
+            echo ""
+            echo "Tenant **$TENANT_NAME** was decommissioned."
+          } >> "$GITHUB_STEP_SUMMARY"

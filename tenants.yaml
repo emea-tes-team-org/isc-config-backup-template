@@ -1,0 +1,11 @@
+# Tenant registry — lightweight index of all onboarded tenants.
+# Name is the single source of truth: it determines both branch and environment.
+# Optional description may be included for display purposes.
+# Optional schedule uses standard 5-field cron (minute hour day-of-month month day-of-week).
+#   Missing schedule means the tenant runs at the default time (daily at 00:00 UTC).
+# Optional hostname is a display reference only; the authoritative URL lives in
+# .tenant.yaml on each tenant branch.
+# Optional exportPollMinutes / jobTimeoutMinutes tune ISC export poll budget and
+# GitHub Actions job timeout for large tenants (defaults: 10 / 15).
+# Full metadata (description, active, url) lives in .tenant.yaml on each branch.
+tenants:

@@ -1,0 +1,190 @@
+# ISC Maintenance — prune-tags, cleanup-deployments
+
+name: ISC Maintenance
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Maintenance operation"
+        required: true
+        type: choice
+        options:
+          - prune-tags
+          - cleanup-deployments
+          - sync-tenant-secrets
+      environment:
+        description: "Legacy environment to read secrets from (sync-tenant-secrets only)"
+        required: false
+        type: string
+      tenant:
+        description: "Tenant name (sync-tenant-secrets only)"
+        required: false
+        type: string
+      dry_run:
+        description: "Dry run for cleanup-deployments (default true)"
+        required: false
+        default: "true"
+        type: string
+
+permissions:
+  contents: write
+  deployments: write
+
+concurrency:
+  group: isc-maintenance-${{ inputs.operation || 'prune-tags' }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    outputs:
+      operation: ${{ steps.op.outputs.operation }}
+    steps:
+      - name: Resolve operation
+        id: op
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "operation=prune-tags" >> "$GITHUB_OUTPUT"
+          else
+            echo "operation=${{ inputs.operation }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Guard — must run on main
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "ERROR: This workflow must be run from the main branch."
+            exit 1
+          fi
+
+  prune-tags:
+    name: Prune backup tags
+    needs: validate
+    if: needs.validate.outputs.operation == 'prune-tags'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Prune backup tags
+        run: node scripts/prune-tags.mjs
+
+  cleanup-deployments:
+    name: Cleanup deployment history
+    needs: validate
+    if: needs.validate.outputs.operation == 'cleanup-deployments'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: List or delete deployments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          ARGS=()
+          if [ -n "${{ inputs.environment }}" ]; then
+            ARGS+=(--environment "${{ inputs.environment }}")
+          fi
+          if [ "${{ inputs.dry_run }}" != "false" ]; then
+            ARGS+=(--dry-run)
+          fi
+          node scripts/cleanup-deployments.mjs "${ARGS[@]}" | tee "$GITHUB_STEP_SUMMARY"
+
+  sync-tenant-secrets:
+    name: Sync tenant secrets
+    needs: validate
+    if: needs.validate.outputs.operation == 'sync-tenant-secrets'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: write
+    steps:
+      - name: Validate sync inputs
+        run: |
+          if [ -z "${{ inputs.tenant }}" ] || [ -z "${{ inputs.environment }}" ]; then
+            echo "ERROR: sync-tenant-secrets requires tenant and environment inputs"
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          token: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Copy secrets to tenant environment
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          TENANT_URL: ${{ secrets.TENANT_URL }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+        run: node scripts/sync-tenant-secrets.mjs "${{ inputs.tenant }}"
+
+      - name: Commit tenants.yaml update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tenants.yaml
+          if git diff --cached --quiet; then
+            echo "tenants.yaml unchanged"
+          else
+            git commit -m "chore: remove legacy environment override for ${{ inputs.tenant }}"
+            git push origin main
+          fi
+
+  cleanup-sync-deployment:
+    name: Cleanup sync deployment trace
+    needs: [validate, sync-tenant-secrets]
+    if: always() && needs.validate.outputs.operation == 'sync-tenant-secrets'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Remove ephemeral deployment trace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SCRIPT="${RUNNER_TEMP}/cleanup-deployment.sh"
+          gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/cleanup-deployment.sh?ref=main" --jq .content | base64 -d > "$SCRIPT"
+          chmod +x "$SCRIPT"
+          bash "$SCRIPT" "${{ inputs.environment }}"

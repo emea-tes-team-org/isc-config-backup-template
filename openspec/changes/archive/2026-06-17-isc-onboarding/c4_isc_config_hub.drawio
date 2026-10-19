@@ -1,0 +1,314 @@
+<mxfile host="app.diagrams.net" agent="C4 Diagram Skill" version="24.0.0" type="device">
+  <diagram id="c4-container" name="C4 Container Diagram - ISC Config Hub">
+    <mxGraphModel dx="1422" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ======================================== -->
+        <!-- LAYER 1: Person                          -->
+        <!-- ======================================== -->
+
+        <mxCell id="person_1"
+          value=""
+          style="shape=actor;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=#052E56;"
+          vertex="1" parent="1">
+          <mxGeometry x="680" y="20" width="40" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="person_1_label"
+          value="&lt;b&gt;DevOps / Platform Engineer&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:10px;color:#666666&quot;&gt;[Person]&lt;/font&gt;&lt;br/&gt;&lt;font style=&quot;font-size:10px;color:#666666&quot;&gt;Onboards new ISC tenants for daily backups.&lt;/font&gt;"
+          style="text;html=1;fontSize=12;align=center;verticalAlign=top;"
+          vertex="1" parent="1">
+          <mxGeometry x="570" y="85" width="260" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- ======================================== -->
+        <!-- LAYER 2: System Boundary                 -->
+        <!-- ======================================== -->
+
+        <mxCell id="boundary_1"
+          value="ISC Config Hub CI/CD [Software System]"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#444444;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=10;fontColor=#444444;"
+          vertex="1" parent="1">
+          <mxGeometry x="60" y="160" width="1480" height="480" as="geometry"/>
+        </mxCell>
+
+        <!-- Row 1: Workflows -->
+        <mxCell id="container_onboarding"
+          value="&lt;b&gt;Onboarding Workflow&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[Container: GitHub Actions]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Validates credentials, creates tenant branch + env + secrets, registers in manifest.&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;container=0;fillColor=#438DD5;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="boundary_1">
+          <mxGeometry x="80" y="50" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="container_backup"
+          value="&lt;b&gt;Backup Workflow&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[Container: GitHub Actions, per branch]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Daily cron-triggered ISC configuration snapshot. Staggers by onboarding time.&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;container=0;fillColor=#438DD5;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="boundary_1">
+          <mxGeometry x="420" y="50" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="container_restore"
+          value="&lt;b&gt;Restore Workflow&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[Container: GitHub Actions, per branch]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Restores configuration snapshots to ISC tenant via Config Hub API.&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;container=0;fillColor=#438DD5;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="boundary_1">
+          <mxGeometry x="760" y="50" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- Row 2: Storage -->
+        <mxCell id="db_manifest"
+          value="&lt;b&gt;tenants.json&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[Container: JSON manifest on main]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Single source of truth for all onboarded tenants and their backup schedules.&lt;/font&gt;"
+          style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#438DD5;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="boundary_1">
+          <mxGeometry x="80" y="250" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="container_envs"
+          value="&lt;b&gt;GitHub Environments&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[Container: GitHub Environments]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Per-tenant environment secrets: TENANT_URL, CLIENT_ID, CLIENT_SECRET.&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;container=0;fillColor=#438DD5;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="boundary_1">
+          <mxGeometry x="420" y="250" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="db_git"
+          value="&lt;b&gt;Git&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[Container: Git branches + JSON files]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Tenant-dedicated branches with versioned backup snapshots in backups/&lt;tenant&gt;/.&lt;/font&gt;"
+          style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#438DD5;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="boundary_1">
+          <mxGeometry x="760" y="250" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- ======================================== -->
+        <!-- LAYER 3: External Systems                -->
+        <!-- ======================================== -->
+
+        <mxCell id="ext_gh_api"
+          value="&lt;b&gt;GitHub REST API&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[External System]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Used by onboarding to create branches, environments, and secrets.&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;container=0;fillColor=#999999;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="1">
+          <mxGeometry x="300" y="720" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ext_isc"
+          value="&lt;b&gt;ISC Tenant API&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;[External System: SailPoint]&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Identity Security Cloud. Backup exports config; restore uploads it back.&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;container=0;fillColor=#999999;fontColor=#ffffff;strokeColor=none;fontSize=13;align=center;"
+          vertex="1" parent="1">
+          <mxGeometry x="1060" y="720" width="240" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- ======================================== -->
+        <!-- CONNECTIONS                              -->
+        <!-- ======================================== -->
+
+        <!-- Person → Onboarding -->
+        <mxCell id="conn_person_onboard"
+          value="Triggers via workflow_dispatch [GitHub Actions]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+          edge="1" source="person_1" target="container_onboarding" parent="1">
+          <mxGeometry y="-15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Onboarding → ISC API (credential validation) -->
+        <mxCell id="conn_onboard_isc"
+          value="Validates credentials [OAuth/HTTPS]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;"
+          edge="1" source="container_onboarding" target="ext_isc" parent="1">
+          <mxGeometry y="-15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Onboarding → GitHub API -->
+        <mxCell id="conn_onboard_gh"
+          value="Creates branch, env, secrets [REST/HTTPS]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+          edge="1" source="container_onboarding" target="ext_gh_api" parent="1">
+          <mxGeometry y="15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Onboarding → tenants.json -->
+        <mxCell id="conn_onboard_manifest"
+          value="Registers tenant"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+          edge="1" source="container_onboarding" target="db_manifest" parent="1">
+          <mxGeometry y="15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Onboarding → Git -->
+        <mxCell id="conn_onboard_git"
+          value="Creates branch + pushes backup.yml"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+          edge="1" source="container_onboarding" target="db_git" parent="1">
+          <mxGeometry y="30" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Onboarding → Environments -->
+        <mxCell id="conn_onboard_envs"
+          value="Sets secrets"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;"
+          edge="1" source="container_onboarding" target="container_envs" parent="1">
+          <mxGeometry y="-15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Backup → ISC API -->
+        <mxCell id="conn_backup_isc"
+          value="Exports configuration [SP-Config API/HTTPS]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;"
+          edge="1" source="container_backup" target="ext_isc" parent="1">
+          <mxGeometry y="-15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Backup → Environments -->
+        <mxCell id="conn_backup_envs"
+          value="Reads secrets [env vars]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+          edge="1" source="container_backup" target="container_envs" parent="1">
+          <mxGeometry y="15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Backup → Git -->
+        <mxCell id="conn_backup_git"
+          value="Reads/writes backups [git]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;"
+          edge="1" source="container_backup" target="db_git" parent="1">
+          <mxGeometry y="30" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Restore → ISC API -->
+        <mxCell id="conn_restore_isc"
+          value="Uploads configuration [Config Hub API/HTTPS]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+          edge="1" source="container_restore" target="ext_isc" parent="1">
+          <mxGeometry y="45" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Restore → Environments -->
+        <mxCell id="conn_restore_envs"
+          value="Reads secrets [env vars]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;"
+          edge="1" source="container_restore" target="container_envs" parent="1">
+          <mxGeometry y="15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Restore → Git -->
+        <mxCell id="conn_restore_git"
+          value="Reads backup files [git]"
+          style="endArrow=blockThin;endFill=1;fontSize=10;fontColor=#404040;strokeColor=#404040;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+          edge="1" source="container_restore" target="db_git" parent="1">
+          <mxGeometry y="15" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ======================================== -->
+        <!-- LEGEND                                   -->
+        <!-- ======================================== -->
+
+        <mxCell id="legend_bg"
+          value=""
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#CCCCCC;fontSize=12;"
+          vertex="1" parent="1">
+          <mxGeometry x="1280" y="720" width="300" height="160" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend_title"
+          value="&lt;b&gt;Legend&lt;/b&gt;"
+          style="text;html=1;fontSize=13;fontColor=#333333;align=left;verticalAlign=top;"
+          vertex="1" parent="1">
+          <mxGeometry x="1290" y="725" width="100" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend_person_box"
+          value=""
+          style="rounded=0;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=none;"
+          vertex="1" parent="1">
+          <mxGeometry x="1290" y="750" width="16" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend_person_label"
+          value="Person"
+          style="text;html=1;fontSize=11;fontColor=#333333;align=left;verticalAlign=middle;"
+          vertex="1" parent="1">
+          <mxGeometry x="1314" y="748" width="100" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend_container_box"
+          value=""
+          style="rounded=0;whiteSpace=wrap;html=1;fillColor=#438DD5;strokeColor=none;"
+          vertex="1" parent="1">
+          <mxGeometry x="1290" y="774" width="16" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend_container_label"
+          value="Container / DB"
+          style="text;html=1;fontSize=11;fontColor=#333333;align=left;verticalAlign=middle;"
+          vertex="1" parent="1">
+          <mxGeometry x="1314" y="772" width="120" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend_ext_box"
+          value=""
+          style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=none;"
+          vertex="1" parent="1">
+          <mxGeometry x="1290" y="798" width="16" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend_ext_label"
+          value="External System"
+          style="text;html=1;fontSize=11;fontColor=#333333;align=left;verticalAlign=middle;"
+          vertex="1" parent="1">
+          <mxGeometry x="1314" y="796" width="120" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend_sync_line"
+          value=""
+          style="endArrow=blockThin;endFill=1;strokeColor=#404040;"
+          edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1460" y="758" as="sourcePoint"/>
+            <mxPoint x="1510" y="758" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend_sync_label"
+          value="Synchronous"
+          style="text;html=1;fontSize=11;fontColor=#333333;align=left;verticalAlign=middle;"
+          vertex="1" parent="1">
+          <mxGeometry x="1514" y="748" width="90" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend_async_line"
+          value=""
+          style="endArrow=blockThin;endFill=1;strokeColor=#404040;dashed=1;dashPattern=5 5;"
+          edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1460" y="782" as="sourcePoint"/>
+            <mxPoint x="1510" y="782" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend_async_label"
+          value="Asynchronous"
+          style="text;html=1;fontSize=11;fontColor=#333333;align=left;verticalAlign=middle;"
+          vertex="1" parent="1">
+          <mxGeometry x="1514" y="772" width="90" height="20" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

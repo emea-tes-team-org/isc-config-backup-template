@@ -1,0 +1,137 @@
+name: ISC Restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Source branch or backup tag (e.g. fernando or fernando/2026-08-12_00-00-00)"
+        required: true
+        type: string
+      target_tenant:
+        description: "Target tenant name to restore TO"
+        required: true
+        type: string
+      restore_mode:
+        description: "Restore mode"
+        required: true
+        default: semantic-diff
+        type: choice
+        options:
+          - semantic-diff
+          - full
+      vars_file:
+        description: "Vars file for token substitution (optional)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      source_tenant: ${{ steps.resolve.outputs.source_tenant }}
+      target_tenant: ${{ steps.resolve.outputs.target_tenant }}
+    steps:
+      - name: Guard — must run on main
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "ERROR: ISC Restore must be run from the main branch."
+            exit 1
+          fi
+
+      - name: Checkout main (for tenants.yaml)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve source and target
+        id: resolve
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TARGET: ${{ inputs.target_tenant }}
+        run: |
+          if [ -z "$SOURCE_REF" ]; then
+            echo "Error: source_ref is required"
+            exit 1
+          fi
+
+          echo "source_ref=$SOURCE_REF" >> $GITHUB_OUTPUT
+          echo "Source ref: $SOURCE_REF"
+
+          if [[ "$SOURCE_REF" == *"/"* ]]; then
+            SOURCE_TENANT="${SOURCE_REF%/*}"
+          else
+            SOURCE_TENANT="$SOURCE_REF"
+          fi
+          echo "source_tenant=$SOURCE_TENANT" >> $GITHUB_OUTPUT
+
+          if [ ! -f "tenants.yaml" ]; then
+            echo "Error: tenants.yaml not found"
+            exit 1
+          fi
+
+          if ! grep -q "^  - name: $TARGET$" tenants.yaml; then
+            echo "Error: Target tenant '$TARGET' not found in tenants.yaml"
+            exit 1
+          fi
+
+          echo "target_tenant=$TARGET" >> $GITHUB_OUTPUT
+          echo "✅ Target tenant validated: $TARGET"
+
+  restore:
+    name: Restore ${{ needs.validate.outputs.source_ref }} → ${{ inputs.target_tenant }}
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ needs.validate.outputs.target_tenant }}
+
+    steps:
+      - name: Checkout main (scripts + full history)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run restore
+        env:
+          TENANT_URL: ${{ secrets.TENANT_URL }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+        run: |
+          SOURCE_REF="${{ needs.validate.outputs.source_ref }}"
+          SOURCE_TENANT="${{ needs.validate.outputs.source_tenant }}"
+          TARGET="${{ needs.validate.outputs.target_tenant }}"
+          MODE="${{ inputs.restore_mode }}"
+          VARS="${{ inputs.vars_file }}"
+
+          CMD="node scripts/cli.mjs restore $SOURCE_REF --tenant $SOURCE_TENANT --target $TARGET"
+          if [ "$MODE" = "full" ]; then
+            CMD="$CMD --full"
+          fi
+          if [ -n "$VARS" ]; then
+            CMD="$CMD --vars $VARS"
+          fi
+          echo "Running: $CMD"
+          eval $CMD
+
+      - name: Report result
+        if: always()
+        run: |
+          {
+            echo "## Restore Report"
+            echo "- **Source ref:** ${{ needs.validate.outputs.source_ref }}"
+            echo "- **Target tenant:** ${{ inputs.target_tenant }}"
+            echo "- **Mode:** ${{ inputs.restore_mode }}"
+          } >> "$GITHUB_STEP_SUMMARY"
