@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "cli": "node scripts/cli.mjs",
-    "start": "node scripts/cli.mjs"
+    "start": "node scripts/cli.mjs",
+    "check:lockfile-registry": "node scripts/check-lockfile-registry.mjs",
+    "fix:lockfile-registry": "node scripts/check-lockfile-registry.mjs --fix"
   },
   "dependencies": {
     "js-yaml": "^4.2.0",

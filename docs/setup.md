@@ -4,6 +4,25 @@
 
 Fork or use this repository as a template.
 
+### Local development behind an internal npm registry
+
+If your machine's `npm` is configured (via `~/.npmrc`) to resolve packages
+through an internal mirror such as Artifactory, running `npm install` locally
+can bake that mirror's URL into `package-lock.json`'s `resolved` fields.
+GitHub Actions runners cannot reach internal mirrors, so this breaks every
+workflow's `npm ci` step with a `403 Forbidden` on "Install dependencies".
+
+Before committing a `package-lock.json` change, run:
+
+```bash
+npm run check:lockfile-registry   # fails if any entry resolves from a non-public host
+npm run fix:lockfile-registry     # rewrites those entries to registry.npmjs.org
+```
+
+The rewrite only changes the tarball host; it is safe because an internal
+mirror simply proxies the public registry, so the tarball content and
+`integrity` hash are unchanged.
+
 ## 2. Create a SailPoint API client
 
 In your ISC tenant, create a Personal Access Token (PAT) or API client with the following scopes:
