@@ -37,7 +37,8 @@ export { BACKUP_DIR };
 
 export class ExportRetryableError extends Error {
   constructor(status, jobId, data) {
-    super(`Export status ${status} (job ${jobId})`);
+    const detail = data?.message ? `: ${data.message}` : "";
+    super(`Export status ${status} (job ${jobId})${detail}`);
     this.name = "ExportRetryableError";
     this.status = status;
     this.jobId = jobId;
@@ -156,12 +157,18 @@ export async function runExportWithRetries(includeTypes, options, deps = { apiCa
       }
       return jobId;
     } catch (err) {
-      if (err instanceof ExportRetryableError && exportAttempt < maxExportAttempts) {
-        failedJobIds.push(err.jobId);
-        console.log(
-          `Retryable export failure (${err.status}) for job ${err.jobId}; creating new export...`
-        );
-        continue;
+      if (err instanceof ExportRetryableError) {
+        // The job payload carries the underlying cause (e.g. an unsupported
+        // object type). Without it, the status alone is not diagnosable.
+        console.log(`  Job details: ${JSON.stringify(err.data)}`);
+
+        if (exportAttempt < maxExportAttempts) {
+          failedJobIds.push(err.jobId);
+          console.log(
+            `Retryable export failure (${err.status}) for job ${err.jobId}; creating new export...`
+          );
+          continue;
+        }
       }
       throw err;
     }

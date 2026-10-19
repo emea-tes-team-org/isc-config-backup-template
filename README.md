@@ -60,7 +60,3 @@ No backup summary reports committed yet.
 ## License
 
 Distributed under the MIT License. See `LICENSE.txt` for more information.
-
-## Discuss
-
-[Click Here](https://developer.sailpoint.com/dicuss/tag/{tagName}) to discuss this tool with other users.

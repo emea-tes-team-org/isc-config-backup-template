@@ -22,7 +22,3 @@ Automated daily backup of SailPoint Identity Security Cloud (ISC) tenant configu
 ## License
 
 Distributed under the MIT License. See `LICENSE.txt` for more information.
-
-## Discuss
-
-[Click Here](https://developer.sailpoint.com/dicuss/tag/{tagName}) to discuss this tool with other users.
