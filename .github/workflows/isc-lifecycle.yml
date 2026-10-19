@@ -65,6 +65,19 @@ jobs:
       operation: ${{ steps.check.outputs.operation }}
       tenant_name: ${{ steps.check.outputs.tenant_name }}
     steps:
+      # workflow_dispatch inputs are not masked automatically, and Actions
+      # prints each run step's env block, so register the credentials before
+      # any step can echo them. Values are read from the event payload to keep
+      # them out of this step's own env.
+      - name: Mask credential inputs
+        run: |
+          for field in client_id client_secret; do
+            value=$(jq -r --arg f "$field" '.inputs[$f] // empty' "$GITHUB_EVENT_PATH")
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+            fi
+          done
+
       - name: Guard — must run on main
         run: |
           if [ "${{ github.ref_name }}" != "main" ]; then
@@ -124,6 +137,17 @@ jobs:
     if: needs.validate.outputs.operation == 'onboard'
     runs-on: ubuntu-latest
     steps:
+      # Masks are per-job, so register them again here before the credentials
+      # reach any step env block. See the validate job for details.
+      - name: Mask credential inputs
+        run: |
+          for field in client_id client_secret; do
+            value=$(jq -r --arg f "$field" '.inputs[$f] // empty' "$GITHUB_EVENT_PATH")
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+            fi
+          done
+
       - name: Check ADMIN_TOKEN secret
         run: |
           if [ -z "${{ secrets.ADMIN_TOKEN }}" ]; then
