@@ -5,6 +5,9 @@
 // Usage: node scripts/test-backup-export-retry.mjs
 // ---------------------------------------------------------------------------
 
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { assert, finalizeTests } from "./test-utils.mjs";
 
 process.env.TENANT_URL = "https://test.example.com";
@@ -16,10 +19,13 @@ const {
   ExportRetryableError,
   pollExport,
   runExportWithRetries,
+  extractFailingExportType,
   resolvePollConfig,
   DEFAULT_MAX_EXPORT_ATTEMPTS,
   DEFAULT_POLL_INTERVAL_MS,
   RETRYABLE_EXPORT_STATUSES,
+  SKIPPED_EXPORT_TYPES,
+  collectExistingFiles,
 } = await import("./backup.mjs");
 
 console.log("Testing backup export retry...\n");
@@ -190,6 +196,86 @@ console.log("Testing backup export retry...\n");
   }
   assert(caught instanceof ExportRetryableError, "runExportWithRetries fails after max export attempts");
   assert(createCount === 3, "runExportWithRetries attempts three exports before failing");
+}
+
+// SKIPPED_EXPORT_TYPES includes TAG and RULE
+{
+  assert(SKIPPED_EXPORT_TYPES instanceof Set, "SKIPPED_EXPORT_TYPES is a Set");
+  assert(SKIPPED_EXPORT_TYPES.has("TAG"), "SKIPPED_EXPORT_TYPES includes TAG");
+  assert(SKIPPED_EXPORT_TYPES.has("RULE"), "SKIPPED_EXPORT_TYPES includes RULE");
+}
+
+// extractFailingExportType parses error message correctly
+{
+  const msg1 = "java.lang.RuntimeException: Exception communicating with target service. action=export type=RULE url=rules/export status=503";
+  assert(extractFailingExportType(msg1) === "RULE", "extractFailingExportType extracts RULE from action=export message");
+
+  const msg2 = "Exception communicating with target service. type=WORKFLOW url=workflows/export status=500";
+  assert(extractFailingExportType(msg2) === "WORKFLOW", "extractFailingExportType extracts WORKFLOW");
+
+  assert(extractFailingExportType("") === null, "extractFailingExportType returns null for empty message");
+  assert(extractFailingExportType(null) === null, "extractFailingExportType returns null for null message");
+  assert(extractFailingExportType("random error without type") === null, "extractFailingExportType returns null when no type found");
+}
+
+// runExportWithRetries drops failing type on retry
+{
+  const requestedTypesHistory = [];
+  const deps = {
+    createExport: async (types) => {
+      requestedTypesHistory.push([...types]);
+      return `job-${requestedTypesHistory.length}`;
+    },
+    apiCall: async (_method, path) => {
+      const jobId = path.split("/").pop();
+      if (jobId === "job-1") {
+        return {
+          status: "FAILED_EXTERNAL_COMMUNICATION",
+          message: "Exception communicating with target service. action=export type=RULE url=rules/export status=503",
+        };
+      }
+      return { status: "COMPLETE" };
+    },
+    sleep: async () => {},
+  };
+
+  const typesToExport = ["ROLE", "RULE"];
+  const jobId = await runExportWithRetries(
+    typesToExport,
+    { maxExportAttempts: 3, maxPollAttempts: 2, pollIntervalMs: 10 },
+    deps
+  );
+  assert(jobId === "job-2", "runExportWithRetries succeeds on job-2");
+  assert(requestedTypesHistory.length === 2, "runExportWithRetries tried 2 times");
+  assert(requestedTypesHistory[0].includes("RULE") && requestedTypesHistory[0].includes("ROLE"), "Attempt 1 included RULE and ROLE");
+  assert(!requestedTypesHistory[1].includes("RULE") && requestedTypesHistory[1].includes("ROLE"), "Attempt 2 dropped RULE");
+  assert(!typesToExport.includes("RULE"), "includeTypes array was updated in-place without RULE");
+}
+
+// collectExistingFiles ignores SKIPPED_EXPORT_TYPES and unrequested types
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "backup-test-"));
+  try {
+    fs.mkdirSync(path.join(tmpDir, "ROLE"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "ROLE", "role1.json"), "{}");
+    fs.mkdirSync(path.join(tmpDir, "RULE"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "RULE", "rule1.json"), "{}");
+    fs.mkdirSync(path.join(tmpDir, "WORKFLOW"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "WORKFLOW", "wf1.json"), "{}");
+
+    // Without requestedTypes filter, SKIPPED_EXPORT_TYPES (RULE) is still skipped
+    const filesSkipped = collectExistingFiles(tmpDir);
+    assert(filesSkipped.has(path.join("ROLE", "role1.json")), "ROLE file collected");
+    assert(!filesSkipped.has(path.join("RULE", "rule1.json")), "RULE file ignored because it is in SKIPPED_EXPORT_TYPES");
+    assert(filesSkipped.has(path.join("WORKFLOW", "wf1.json")), "WORKFLOW file collected");
+
+    // With requestedTypes filter (only ROLE)
+    const filesRoleOnly = collectExistingFiles(tmpDir, new Set(["ROLE"]));
+    assert(filesRoleOnly.has(path.join("ROLE", "role1.json")), "ROLE file collected when requested");
+    assert(!filesRoleOnly.has(path.join("WORKFLOW", "wf1.json")), "WORKFLOW file ignored when not in requestedTypes");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 finalizeTests();

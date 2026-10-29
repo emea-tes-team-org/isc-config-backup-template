@@ -32,9 +32,10 @@ export const DEFAULT_POLL_INTERVAL_MS = 10_000;
 export const DEFAULT_MAX_EXPORT_ATTEMPTS = 3;
 export const RETRYABLE_EXPORT_STATUSES = new Set(["FAILED_EXTERNAL_COMMUNICATION"]);
 
-// ISC's tag-associations service returns a 500 for TAG exports, which aborts
+// ISC services occasionally return 500 / 503 for specific object type exports
+// (e.g. tag-associations 500 for TAG, rules/export 503 for RULE), which aborts
 // the whole job and leaves every other type unbacked up. Remove once fixed.
-export const SKIPPED_EXPORT_TYPES = new Set(["TAG"]);
+export const SKIPPED_EXPORT_TYPES = new Set(["TAG", "RULE"]);
 import { BACKUP_DIR } from "./backup-path-utils.mjs";
 
 export { BACKUP_DIR };
@@ -150,6 +151,12 @@ export async function pollExport(jobId, options, deps = { apiCall, sleep }) {
   );
 }
 
+export function extractFailingExportType(message) {
+  if (!message || typeof message !== "string") return null;
+  const match = message.match(/(?:action=export\s+)?type=([A-Za-z0-9_]+)/i);
+  return match ? match[1] : null;
+}
+
 export async function runExportWithRetries(includeTypes, options, deps = { apiCall, sleep, createExport }) {
   const { maxExportAttempts, maxPollAttempts, pollIntervalMs } = options;
   const failedJobIds = [];
@@ -174,6 +181,16 @@ export async function runExportWithRetries(includeTypes, options, deps = { apiCa
 
         if (exportAttempt < maxExportAttempts) {
           failedJobIds.push(err.jobId);
+          const failingType = extractFailingExportType(err.data?.message);
+          if (failingType && includeTypes.includes(failingType)) {
+            const idx = includeTypes.indexOf(failingType);
+            if (idx !== -1) {
+              includeTypes.splice(idx, 1);
+              console.log(
+                `Dropping failing export type ${failingType} from subsequent export attempts.`
+              );
+            }
+          }
           console.log(
             `Retryable export failure (${err.status}) for job ${err.jobId}; creating new export...`
           );
@@ -195,12 +212,14 @@ export async function runExportWithRetries(includeTypes, options, deps = { apiCa
  * Build a set of all existing backup file paths (relative to BACKUP_DIR)
  * so we can detect deletions after the download completes.
  */
-function collectExistingFiles(dir) {
+export function collectExistingFiles(dir, requestedTypes = null) {
   const existing = new Set();
   if (!existsSync(dir)) return existing;
 
   for (const typeName of readdirSync(dir, { withFileTypes: true })) {
     if (!typeName.isDirectory()) continue;
+    if (requestedTypes && !requestedTypes.has(typeName.name)) continue;
+    if (SKIPPED_EXPORT_TYPES.has(typeName.name)) continue;
     const typeDir = join(dir, typeName.name);
     for (const file of readdirSync(typeDir, { withFileTypes: true })) {
       if (file.isFile()) {
@@ -288,7 +307,7 @@ function removeEmptyDirectories(backupDir) {
   }
 }
 
-async function downloadObjects(jobId) {
+async function downloadObjects(jobId, exportedTypes = null) {
   console.log("Downloading export...");
 
   const response = await apiCall(
@@ -306,7 +325,8 @@ async function downloadObjects(jobId) {
 
   console.log(`  Export contains ${items.length} objects`);
 
-  const existingFiles = collectExistingFiles(BACKUP_DIR);
+  const requestedTypes = exportedTypes ? new Set(exportedTypes) : null;
+  const existingFiles = collectExistingFiles(BACKUP_DIR, requestedTypes);
   const seenFiles = new Set();
 
   let totalCount = 0;
@@ -363,7 +383,7 @@ async function main() {
   });
 
   await authenticate();
-  await downloadObjects(jobId);
+  await downloadObjects(jobId, types);
 
   console.log();
   console.log("=== Backup complete! ===");
