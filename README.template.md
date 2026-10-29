@@ -1,8 +1,3 @@
-[Discourse Topics](https://developer.sailpoint.com/discuss/tag/workflows)
-[Issues](https://github.com/sailpoint-oss/repo-template/issues)
-[Latest Releases](https://github.com/sailpoint-oss/repo-template/releases)
-[Contributor Shield](https://github.com/sailpoint-oss/repo-template/graphs/contributors)
-
 # Config Hub CI/CD — ISC Configuration Backup
 
 Automated daily backup of SailPoint Identity Security Cloud (ISC) tenant configuration using the Configuration Hub and SP-Config APIs. Configuration objects are stored as JSON files in this repository, with git history providing a complete audit trail of changes over time.
